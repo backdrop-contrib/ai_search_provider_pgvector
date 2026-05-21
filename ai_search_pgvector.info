@@ -1,0 +1,6 @@
+name = AI Search PGVector
+description = PostgreSQL pgvector provider for AI search.
+backdrop = 1.x
+type = module
+package = AI
+dependencies[] = ai_search
