@@ -143,7 +143,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
 
           // Use plain SQL for upsert.
           $qualified = $this->qualify($schema, $table);
-          $sql = "INSERT INTO {$qualified} (id, backdrop_entity_id, nid, content, vector) VALUES (:id, :beid, :nid, :content, :vector::vector) "
+          $sql = "INSERT INTO {$qualified} (id, backdrop_entity_id, nid, content, vector) VALUES (:id, :beid, :nid, :content, CAST(:vector AS vector)) "
                . "ON CONFLICT (id) DO UPDATE SET backdrop_entity_id = EXCLUDED.backdrop_entity_id, nid = EXCLUDED.nid, content = EXCLUDED.content, vector = EXCLUDED.vector";
 
           db_query($sql, [
@@ -250,7 +250,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
 
     $vector_literal = '[' . implode(',', array_map('floatval', $query_embedding)) . ']';
 
-    $sql = "SELECT *, (vector {$operator} :q::vector) AS distance FROM {$qualified} ORDER BY vector {$operator} :q::vector LIMIT :limit";
+    $sql = "SELECT *, (vector {$operator} CAST(:q AS vector)) AS distance FROM {$qualified} ORDER BY vector {$operator} CAST(:q AS vector) LIMIT :limit";
     $result = db_query($sql, [
       ':q' => $vector_literal,
       ':limit' => (int) $top_k,
@@ -374,14 +374,14 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       // Validate dimension; if wrong, fail loudly (dropping data would be risky).
       try {
         // For pgvector, dimension is stored in atttypmod; see pgvector docs: dim = atttypmod - 4.
-        $dim = db_query("SELECT atttypmod - 4 FROM pg_attribute WHERE attrelid = :rel::regclass AND attname = 'vector'", [':rel' => $qualified])->fetchField();
+        $dim = db_query("SELECT atttypmod - 4 FROM pg_attribute WHERE attrelid = to_regclass(:rel) AND attname = 'vector'", [':rel' => $qualified])->fetchField();
       }
       catch (\Exception $e) {
         $dim = NULL;
       }
-      // If dimension is different, log a warning.
+      // If dimension is different, fail fast — proceeding would corrupt stored vectors.
       if ($dim && (int) $dim !== (int) $dimension) {
-        watchdog('ai_search_pgvector', 'Existing table @t vector dimension (@d1) differs from configured (@d2).', ['@t' => $qualified, '@d1' => $dim, '@d2' => $dimension], WATCHDOG_WARNING);
+        throw new \Exception(sprintf('Existing table %s vector dimension (%d) differs from configured (%d).', $qualified, (int) $dim, (int) $dimension));
       }
     }
 
