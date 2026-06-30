@@ -4,11 +4,11 @@
  * PostgreSQL + pgvector Search API backend for Backdrop CMS.
  */
 
-require_once backdrop_get_path('module', 'ai_search') . '/includes/SearchApiAiBackendPluginBase.inc';
-require_once backdrop_get_path('module', 'ai_search') . '/includes/SearchApiBackendInterface.inc';
-require_once backdrop_get_path('module', 'ai_search') . '/includes/SearchApiAiBackend.inc';
+require_once backdrop_get_path('module', 'ai_search') . '/includes/AiSearchBackendPluginBase.inc';
+require_once backdrop_get_path('module', 'ai_search') . '/includes/AiSearchBackendInterface.inc';
+require_once backdrop_get_path('module', 'ai_search') . '/includes/AiSearchBackend.inc';
 
-class PgvectorService extends SearchApiAbstractService implements SearchApiAiBackendInterface {
+class PgvectorService extends SearchApiAbstractService implements AiSearchBackendInterface {
 
   const TABLE_PREFIX = 'search_vector_';
 
@@ -55,7 +55,7 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
     ];
     $form['table'] = [
       '#type' => 'textfield',
-      '#title' => t('Table name (optional]'),
+      '#title' => t('Table name (optional)'),
       '#description' => t('Leave empty to auto-generate per index, prefixed with @p.', ['@p' => self::TABLE_PREFIX]),
       '#default_value' => !empty($this->options['table']) ? $this->options['table'] : '',
       '#pattern' => '[a-zA-Z0-9_]*',
@@ -143,8 +143,8 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
 
           // Use plain SQL for upsert.
           $qualified = $this->qualify($schema, $table);
-          $sql = "INSERT INTO {$qualified} (id, backdrop_entity_id, nid, content, vector] VALUES (:id, :beid, :nid, :content, :vector::vector] "
-               . "ON CONFLICT (id] DO UPDATE SET backdrop_entity_id = EXCLUDED.backdrop_entity_id, nid = EXCLUDED.nid, content = EXCLUDED.content, vector = EXCLUDED.vector";
+          $sql = "INSERT INTO {$qualified} (id, backdrop_entity_id, nid, content, vector) VALUES (:id, :beid, :nid, :content, :vector::vector) "
+               . "ON CONFLICT (id) DO UPDATE SET backdrop_entity_id = EXCLUDED.backdrop_entity_id, nid = EXCLUDED.nid, content = EXCLUDED.content, vector = EXCLUDED.vector";
 
           db_query($sql, [
             ':id' => $long_id,
@@ -192,7 +192,7 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
       $placeholders[] = $ph;
       $args[$ph] = $beid;
     }
-    $sql = "DELETE FROM {$qualified} WHERE backdrop_entity_id IN (" . implode(',', $placeholders) . "]";
+    $sql = "DELETE FROM {$qualified} WHERE backdrop_entity_id IN (" . implode(',', $placeholders) . ")";
     db_query($sql, $args);
   }
 
@@ -250,7 +250,7 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
 
     $vector_literal = '[' . implode(',', array_map('floatval', $query_embedding)) . ']';
 
-    $sql = "SELECT *, (vector {$operator} :q::vector] AS distance FROM {$qualified} ORDER BY vector {$operator} :q::vector LIMIT :limit";
+    $sql = "SELECT *, (vector {$operator} :q::vector) AS distance FROM {$qualified} ORDER BY vector {$operator} :q::vector LIMIT :limit";
     $result = db_query($sql, [
       ':q' => $vector_literal,
       ':limit' => (int) $top_k,
@@ -362,12 +362,12 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
 
     if (!$exists) {
       $sql = 'CREATE TABLE ' . $qualified . ' (
-        id VARCHAR(200] PRIMARY KEY,
-        backdrop_entity_id VARCHAR(200],
+        id VARCHAR(200) PRIMARY KEY,
+        backdrop_entity_id VARCHAR(200),
         nid INTEGER NULL,
         content TEXT,
-        vector VECTOR(' . (int) $dimension . ']
-      ]';
+        vector VECTOR(' . (int) $dimension . ')
+      )';
       db_query($sql);
     }
     else {
@@ -381,7 +381,7 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
       }
       // If dimension is different, log a warning.
       if ($dim && (int) $dim !== (int) $dimension) {
-        watchdog('ai_search_pgvector', 'Existing table @t vector dimension (@d1] differs from configured (@d2].', ['@t' => $qualified, '@d1' => $dim, '@d2' => $dimension], WATCHDOG_WARNING);
+        watchdog('ai_search_pgvector', 'Existing table @t vector dimension (@d1) differs from configured (@d2).', ['@t' => $qualified, '@d1' => $dim, '@d2' => $dimension], WATCHDOG_WARNING);
       }
     }
 
@@ -392,7 +392,7 @@ class PgvectorService extends SearchApiAbstractService implements SearchApiAiBac
     $index_name = $table . '_ivfflat_idx';
     $exists_idx = db_query("SELECT 1 FROM pg_indexes WHERE schemaname = :s AND tablename = :t AND indexname = :i", [':s' => $schema, ':t' => $table, ':i' => $index_name])->fetchField();
     if (!$exists_idx) {
-      db_query('CREATE INDEX ' . $index_name . ' ON ' . $qualified . ' USING ivfflat (vector ' . $opclass . '] WITH (lists = ' . (int) $lists . ']');
+      db_query('CREATE INDEX ' . $index_name . ' ON ' . $qualified . ' USING ivfflat (vector ' . $opclass . ') WITH (lists = ' . (int) $lists . ')');
       // ANALYZE recommended for IVFFLAT.
       db_query('ANALYZE ' . $qualified);
     }

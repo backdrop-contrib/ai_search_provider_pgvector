@@ -1,0 +1,29 @@
+<?php
+
+/**
+ * @file
+ * PostgreSQL pgvector provider for AI search.
+ */
+
+/**
+ * Implements hook_autoload_info().
+ */
+function ai_search_pgvector_autoload_info() {
+  return [
+    'PgvectorService' => 'includes/PgvectorService.inc',
+  ];
+}
+
+/**
+ * Implements hook_search_api_service_info().
+ */
+function ai_search_pgvector_search_api_service_info() {
+  return [
+    'pgvector' => [
+      'name' => t('PostgreSQL pgvector'),
+      'description' => t('pgvector backend for Search API AI. Requires PostgreSQL with the vector extension.'),
+      'class' => 'PgvectorService',
+      'file' => 'includes/PgvectorService.inc',
+    ],
+  ];
+}
