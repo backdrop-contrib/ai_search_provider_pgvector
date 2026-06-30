@@ -409,8 +409,8 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
   protected function metricOperator($metric) {
     switch (strtoupper($metric)) {
       case 'IP': return '<#>';
+      case 'COSINE': return '<=>';
       case 'L2':
-      case 'COSINE':
       default: return '<->';
     }
   }
