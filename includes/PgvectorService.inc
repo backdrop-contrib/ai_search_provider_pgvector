@@ -599,15 +599,11 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
 
     $qualified = $this->qualify($schema, $table);
 
-    // Does the table exist?
-    $exists = FALSE;
-    try {
-      $this->execSql('SELECT 1 FROM ' . $qualified . ' LIMIT 1');
-      $exists = TRUE;
-    }
-    catch (\Exception $e) {
-      $exists = FALSE;
-    }
+    // Does the table exist? to_regclass() is a side-effect-free lookup
+    // (unlike a probing SELECT, it never errors), returning NULL when the
+    // relation doesn't exist -- same pattern already used below for the
+    // dimension check.
+    $exists = $this->execSql('SELECT to_regclass(:rel)', [':rel' => $qualified])->fetchColumn() !== NULL;
 
     if (!$exists) {
       $sql = 'CREATE TABLE ' . $qualified . ' (
@@ -655,6 +651,16 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     // autovacuum) rather than an exact COUNT(*), which requires a full table
     // scan and gets run on every indexItems() batch.
     $row_count = (int) $this->execSql('SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(:rel)', [':rel' => $qualified])->fetchColumn();
+    if ($row_count < self::IVFFLAT_MIN_ROWS) {
+      // reltuples stays 0 (or stale) until ANALYZE/autovacuum has run, which
+      // could permanently suppress IVFFLAT creation on a table that has long
+      // since grown past the threshold. Refresh statistics before trusting
+      // a "below threshold" estimate -- cheaper than an exact COUNT(*) since
+      // ANALYZE only samples a bounded number of pages regardless of table
+      // size, and it fixes the estimate for future calls too.
+      $this->execSql('ANALYZE ' . $qualified);
+      $row_count = (int) $this->execSql('SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(:rel)', [':rel' => $qualified])->fetchColumn();
+    }
     if ($row_count < self::IVFFLAT_MIN_ROWS) {
       $this->tablesEnsured[$qualified_cache_key] = TRUE;
       return;
