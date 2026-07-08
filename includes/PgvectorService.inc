@@ -464,9 +464,13 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
 
     $vector_literal = '[' . implode(',', array_map('floatval', $vector)) . ']';
 
-    $sql = "SELECT *, (vector {$operator} CAST(:q AS vector)) AS distance FROM {$qualified} ORDER BY vector {$operator} CAST(:q AS vector) LIMIT " . $top_k;
+    // Native PDO_PGSQL prepared statements don't support reusing the same
+    // named placeholder twice in one query, so bind separate placeholders
+    // for the SELECT and ORDER BY occurrences even though they share a value.
+    $sql = "SELECT *, (vector {$operator} CAST(:q1 AS vector)) AS distance FROM {$qualified} ORDER BY vector {$operator} CAST(:q2 AS vector) LIMIT " . $top_k;
     $result = $this->execSql($sql, [
-      ':q' => $vector_literal,
+      ':q1' => $vector_literal,
+      ':q2' => $vector_literal,
     ]);
 
     // Collect DB rows and normalize for reranking.
