@@ -27,3 +27,51 @@ function ai_search_pgvector_search_api_service_info() {
     ],
   ];
 }
+
+/**
+ * Implements hook_ai_search_rag_backend_info().
+ *
+ * Without this, pgvector servers are invisible to any RAG consumer
+ * (ai_agents/ai_assistants tools, ai_search_query_backend()) that dispatches
+ * through ai_search_get_rag_backend_definition() — only servers with a
+ * registered backend show up as usable, matching milvus/pinecone.
+ */
+function ai_search_pgvector_ai_search_rag_backend_info() {
+  return [
+    'pgvector' => [
+      'server_classes' => ['pgvector'],
+      'query_callback' => 'ai_search_pgvector_rag_query',
+      'matches_callback' => 'ai_search_pgvector_rag_matches',
+    ],
+  ];
+}
+
+/**
+ * Query callback: run a vector query against a pgvector backend for ai_search RAG.
+ *
+ * Registered via hook_ai_search_rag_backend_info(); the signature matches the
+ * query_callback contract documented in ai_search.api.php.
+ */
+function ai_search_pgvector_rag_query($server, $index, array $vector, $dimension, $top_k) {
+  if (!class_exists('PgvectorService')) {
+    module_load_include('inc', 'ai_search_pgvector', 'includes/PgvectorService');
+  }
+  if (!class_exists('PgvectorService')) {
+    throw new \Exception('pgvector provider class unavailable. Enable the AI Search pgvector module.');
+  }
+
+  $service = new PgvectorService($server);
+  return $service->queryVector($index, $vector, $top_k);
+}
+
+/**
+ * Matches callback: extract normalized match rows from a pgvector response.
+ *
+ * Registered via hook_ai_search_rag_backend_info().
+ */
+function ai_search_pgvector_rag_matches($vector_results, $server = NULL, $index = NULL) {
+  if (!empty($vector_results['results']) && is_array($vector_results['results'])) {
+    return array_values($vector_results['results']);
+  }
+  return is_array($vector_results) ? array_values($vector_results) : [];
+}
