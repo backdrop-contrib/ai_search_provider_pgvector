@@ -70,8 +70,11 @@ function ai_search_pgvector_rag_query($server, $index, array $vector, $dimension
  * Registered via hook_ai_search_rag_backend_info().
  */
 function ai_search_pgvector_rag_matches($vector_results, $server = NULL, $index = NULL) {
-  if (!empty($vector_results['results']) && is_array($vector_results['results'])) {
-    return array_values($vector_results['results']);
+  if (empty($vector_results['results']) || !is_array($vector_results['results'])) {
+    return [];
   }
-  return is_array($vector_results) ? array_values($vector_results) : [];
+  // Each row from PgvectorService::queryVector() already carries its own
+  // 'id' field, so reindexing with array_values() here does not lose the
+  // identity downstream RAG consumers rely on.
+  return array_values($vector_results['results']);
 }

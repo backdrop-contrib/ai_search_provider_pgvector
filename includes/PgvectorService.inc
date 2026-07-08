@@ -31,6 +31,15 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
    */
   protected $pdo;
 
+  /**
+   * Qualified table names already verified/created in this request, so
+   * ensureTable() doesn't re-run CREATE SCHEMA/EXTENSION and index-existence
+   * checks on every indexItems() batch within the same request.
+   *
+   * @var array
+   */
+  protected $tablesEnsured = [];
+
   public function __construct($configuration = []) {
     parent::__construct($configuration);
     if (is_object($configuration) && property_exists($configuration, 'options')) {
@@ -52,6 +61,8 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       'database'      => '',
       'username'      => '',
       'password'      => '',
+      'connect_timeout' => 5,
+      'sslmode'       => '',
       'schema'        => 'public',
       'table'         => '', // default to computed per-index table name
       'metric_type'   => 'COSINE', // COSINE | L2 | IP
@@ -71,12 +82,17 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     $database = !empty($this->options['database']) ? $this->options['database'] : '';
     $username = !empty($this->options['username']) ? $this->options['username'] : '';
     $password = isset($this->options['password']) ? $this->options['password'] : '';
+    $connect_timeout = !empty($this->options['connect_timeout']) ? (int) $this->options['connect_timeout'] : 5;
+    $sslmode = !empty($this->options['sslmode']) ? $this->options['sslmode'] : '';
 
     if ($host === '' || $database === '') {
       throw new Exception('pgvector backend is not configured: host and database are required.');
     }
 
-    $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s', $host, $port, $database);
+    $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s;connect_timeout=%d', $host, $port, $database, $connect_timeout);
+    if ($sslmode !== '') {
+      $dsn .= ';sslmode=' . $sslmode;
+    }
     $this->pdo = new PDO($dsn, $username, $password, [
       PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
       PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_OBJ,
@@ -138,6 +154,28 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       '#type' => 'password',
       '#title' => t('Password'),
       '#description' => t('Leave blank to keep the currently saved password.'),
+    ];
+    $form['connect_timeout'] = [
+      '#type' => 'number',
+      '#title' => t('Connection timeout (seconds)'),
+      '#description' => t('How long to wait when connecting to a remote server before giving up.'),
+      '#default_value' => !empty($this->options['connect_timeout']) ? (int) $this->options['connect_timeout'] : 5,
+      '#min' => 1,
+    ];
+    $form['sslmode'] = [
+      '#type' => 'select',
+      '#title' => t('SSL mode'),
+      '#description' => t('PostgreSQL sslmode connection parameter. Leave as default for local/trusted connections.'),
+      '#default_value' => !empty($this->options['sslmode']) ? $this->options['sslmode'] : '',
+      '#options' => [
+        '' => t('- Default -'),
+        'disable' => 'disable',
+        'allow' => 'allow',
+        'prefer' => 'prefer',
+        'require' => 'require',
+        'verify-ca' => 'verify-ca',
+        'verify-full' => 'verify-full',
+      ],
     ];
 
     $form['schema'] = [
@@ -220,7 +258,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     // "entity:node/192:en" or "node/192"; handle those too. The item VALUE is
     // a field array and does not carry ->nid/->tid/->item_id, so those object
     // properties are only a last-resort fallback.
-    $index_entity_type = method_exists($index, 'getEntityType') ? $index->getEntityType() : (!empty($index->item_type) ? $index->item_type : NULL);
+    $index_entity_type = $this->getIndexEntityType($index);
     $ids_by_type = [];
     foreach ($items as $id => $item) {
       $entity_type = NULL;
@@ -326,11 +364,13 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       return;
     }
 
-    // Build list of backdrop_entity_id values to delete.
+    // Build list of backdrop_entity_id values to delete, using the same
+    // entity type resolution as indexItems() rather than assuming node.
+    $entity_type = $this->getIndexEntityType($index) ?: 'node';
     $beids = [];
     foreach ($ids as $id) {
       $id = (int) $id;
-      $beids[] = "entity:node/{$id}:en"; // current indices generally use nodes; extend as needed.
+      $beids[] = "entity:{$entity_type}/{$id}:en";
     }
     $placeholders = [];
     $args = [];
@@ -388,7 +428,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     }
 
     $top_k = $query->getOption('top_k') ?? 8;
-    return $this->queryVector($index, $query_embedding, $top_k, $text, $query->getIndex()->getEntityType());
+    return $this->queryVector($index, $query_embedding, $top_k, $text, $this->getIndexEntityType($index));
   }
 
   /**
@@ -452,7 +492,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     $rerank_settings = !empty($this->options['metadata_reranking']) ? $this->options['metadata_reranking'] : [];
     ai_search_apply_metadata_reranking($normalized_matches, $rerank_text, $rerank_settings);
 
-    $entity_type_for_ids = $entity_type_for_ids ?: $index->getEntityType();
+    $entity_type_for_ids = $entity_type_for_ids ?: $this->getIndexEntityType($index);
     $results = [];
     foreach ($normalized_matches as $nm) {
       $row = $nm['_raw'];
@@ -507,13 +547,30 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     return !empty($this->options['schema']) ? $this->options['schema'] : 'public';
   }
   protected function getTableName($index) {
-    $base = !empty($this->options['table']) ? $this->options['table'] : self::TABLE_PREFIX . $index->machine_name;
-    return preg_replace('/[^a-zA-Z0-9_]/', '_', $base);
+    if (!empty($this->options['table'])) {
+      return preg_replace('/[^a-zA-Z0-9_]/', '_', $this->options['table']);
+    }
+    if (!$index || empty($index->machine_name)) {
+      throw new Exception('pgvector backend: cannot determine table name without an index or a configured table name.');
+    }
+    return preg_replace('/[^a-zA-Z0-9_]/', '_', self::TABLE_PREFIX . $index->machine_name);
   }
   protected function qualify($schema, $table) {
     $schema = preg_replace('/[^a-zA-Z0-9_]/', '', $schema);
     $table  = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
     return $schema . '.' . $table;
+  }
+
+  /**
+   * Resolve an index's entity type, tolerating index objects/stubs that
+   * don't implement getEntityType() (e.g. bare stdClass used by some
+   * callers).
+   */
+  protected function getIndexEntityType($index) {
+    if ($index && method_exists($index, 'getEntityType')) {
+      return $index->getEntityType();
+    }
+    return (!empty($index->item_type)) ? $index->item_type : NULL;
   }
 
   /**
@@ -525,6 +582,14 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     if ($schema === '') {
       $schema = 'public';
     }
+
+    $qualified_cache_key = $this->qualify($schema, $table);
+    if (!empty($this->tablesEnsured[$qualified_cache_key])) {
+      // Already verified/created earlier in this request; skip the
+      // repeated CREATE SCHEMA/EXTENSION and index checks below.
+      return;
+    }
+
     // Create schema if not exists. $schema is already sanitized to
     // [a-zA-Z0-9_] above, so it is safe to interpolate directly. (We must not
     // use db_escape_table(), which quotes with MySQL backticks.)
@@ -585,8 +650,13 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     // need. This was previously creating a lists=100 index on ~1500-row
     // tables (75 rows/list), which meant default probes=1 searched roughly
     // 1% of the table and silently missed genuinely relevant matches.
-    $row_count = (int) $this->execSql('SELECT count(*) FROM ' . $qualified)->fetchColumn();
+    //
+    // Use pg_class.reltuples (a planner estimate, refreshed by ANALYZE/
+    // autovacuum) rather than an exact COUNT(*), which requires a full table
+    // scan and gets run on every indexItems() batch.
+    $row_count = (int) $this->execSql('SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(:rel)', [':rel' => $qualified])->fetchColumn();
     if ($row_count < self::IVFFLAT_MIN_ROWS) {
+      $this->tablesEnsured[$qualified_cache_key] = TRUE;
       return;
     }
 
@@ -601,6 +671,8 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       // ANALYZE recommended for IVFFLAT.
       $this->execSql('ANALYZE ' . $qualified);
     }
+
+    $this->tablesEnsured[$qualified_cache_key] = TRUE;
   }
 
   protected function metricOpclass($metric) {
