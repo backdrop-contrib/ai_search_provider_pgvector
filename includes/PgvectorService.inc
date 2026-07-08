@@ -464,13 +464,15 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
 
     $vector_literal = '[' . implode(',', array_map('floatval', $vector)) . ']';
 
-    // Native PDO_PGSQL prepared statements don't support reusing the same
-    // named placeholder twice in one query, so bind separate placeholders
-    // for the SELECT and ORDER BY occurrences even though they share a value.
-    $sql = "SELECT *, (vector {$operator} CAST(:q1 AS vector)) AS distance FROM {$qualified} ORDER BY vector {$operator} CAST(:q2 AS vector) LIMIT " . $top_k;
+    // Compute the distance once and order by its SELECT-list alias (valid in
+    // PostgreSQL) rather than repeating the CAST(:q AS vector) expression --
+    // native PDO_PGSQL prepared statements don't support reusing the same
+    // named placeholder twice in one query, and duplicating the expression
+    // just to work around that is a recurring source of the same bug
+    // whenever this query gets touched again.
+    $sql = "SELECT *, (vector {$operator} CAST(:q AS vector)) AS distance FROM {$qualified} ORDER BY distance LIMIT " . $top_k;
     $result = $this->execSql($sql, [
-      ':q1' => $vector_literal,
-      ':q2' => $vector_literal,
+      ':q' => $vector_literal,
     ]);
 
     // Collect DB rows and normalize for reranking.
