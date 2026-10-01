@@ -187,7 +187,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     $form['table'] = [
       '#type' => 'textfield',
       '#title' => t('Table name (optional)'),
-      '#description' => t('Leave empty to auto-generate per index, prefixed with @p.', ['@p' => self::TABLE_PREFIX]),
+      '#description' => t('Leave empty to auto-generate per index, prefixed with @p. A custom table name must be unique for this index.', ['@p' => self::TABLE_PREFIX]),
       '#default_value' => !empty($this->options['table']) ? $this->options['table'] : '',
       '#pattern' => '[a-zA-Z0-9_]*',
     ];
@@ -232,7 +232,9 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
    */
   public function indexItems(SearchApiIndex $index, array $items) {
     global $ai_search_is_indexing;
+    $previous_indexing = !empty($ai_search_is_indexing);
     $ai_search_is_indexing = TRUE;
+    try {
 
     if (empty($items)) {
       return [];
@@ -323,7 +325,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
               'url'             => $r['metadata']['url'] ?? NULL,
             ]
           );
-          $metadata_json = json_encode(array_filter($metadata, function ($v) { return $v !== NULL; }));
+          $metadata_json = json_encode(ai_search_prepare_vector_metadata($metadata));
 
           // Use plain SQL for upsert.
           $qualified = $this->qualify($schema, $table);
@@ -344,12 +346,26 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     }
 
     return array_unique($successful_ids);
+    }
+    finally {
+      $ai_search_is_indexing = $previous_indexing;
+    }
   }
 
   /**
    * Delete items from pgvector table.
    */
   public function deleteItems($ids = 'all', ?SearchApiIndex $index = NULL) {
+    // Search API passes no index when clearing or deleting the whole server;
+    // each index has its own table, so clear them one by one.
+    if (!$index && empty($this->options['table'])) {
+      if ($ids === 'all' && !empty($this->server->machine_name)) {
+        foreach (search_api_index_load_multiple(FALSE, ['server' => $this->server->machine_name]) as $server_index) {
+          $this->deleteItems('all', $server_index);
+        }
+      }
+      return;
+    }
     $table = $this->getTableName($index);
     $schema = $this->getSchema();
     $qualified = $this->qualify($schema, $table);
@@ -359,18 +375,17 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       return;
     }
 
-    $ids = is_array($ids) ? array_filter($ids) : [];
-    if (empty($ids)) {
+    $ids_by_type = is_array($ids) ? ai_search_normalize_entity_ids($ids, $this->getIndexEntityType($index) ?: 'node') : [];
+    if (empty($ids_by_type)) {
       return;
     }
 
-    // Build list of backdrop_entity_id values to delete, using the same
-    // entity type resolution as indexItems() rather than assuming node.
-    $entity_type = $this->getIndexEntityType($index) ?: 'node';
+    // Build list of backdrop_entity_id values to delete.
     $beids = [];
-    foreach ($ids as $id) {
-      $id = (int) $id;
-      $beids[] = "entity:{$entity_type}/{$id}:en";
+    foreach ($ids_by_type as $entity_type => $entity_ids) {
+      foreach ($entity_ids as $id) {
+        $beids[] = "entity:{$entity_type}/{$id}:en";
+      }
     }
     $placeholders = [];
     $args = [];
@@ -390,45 +405,13 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     $index = $query->getIndex();
     $index_options = isset($index->options) ? $index->options : [];
 
-    // Model selection: server options (canonical) → service embedding_model fallback.
-    $model = $this->options['embeddings_engine'] ?? $this->options['embedding_model'] ?? NULL;
-
-    if (empty($model)) {
-      watchdog('ai_search_pgvector', 'No model configured!', [], WATCHDOG_ERROR);
+    $resolved = ai_search_resolve_query_embedding($query, $this->options, 'ai_search_pgvector');
+    if ($resolved === NULL) {
       return ['result count' => 0, 'results' => []];
     }
 
-    // Extract search text from keys.
-    $keys = $query->getKeys();
-    $text = is_array($keys)
-      ? implode(' ', array_filter($keys, function ($key) { return is_string($key) && $key !== 'AND' && $key !== '#conjunction'; }))
-      : (string) $keys;
-    $text = trim($text);
-    if ($text === '') {
-      return ['result count' => 0, 'results' => []];
-    }
-
-    // Resolve client and request embedding using compatibility helpers.
-    $api = NULL; $stripped_model = NULL; $model_to_use = NULL;
-    $api = ai_get_api_for_model($model, $stripped_model);
-    $model_to_use = !empty($stripped_model) ? $stripped_model : $model;
-
-    if ($api && method_exists($api, 'recordLog')) {
-      $api->recordLog('search_embedding', $model, ['text_len' => strlen($text)], NULL, TRUE, 0);
-    }
-
-    if (!$api) {
-      watchdog('ai_search_pgvector', 'Failed to resolve API client for model: @model', ['@model' => $model], WATCHDOG_ERROR);
-      throw new Exception('Failed to get API client for model: ' . $model);
-    }
-
-    $query_embedding = $api->embedding(ai_search_apply_embedding_task_prefix($text, $model_to_use, 'query'), $model_to_use);
-    if (empty($query_embedding)) {
-      throw new Exception('Failed to retrieve embedding.');
-    }
-
-    $top_k = $query->getOption('top_k') ?? 8;
-    return $this->queryVector($index, $query_embedding, $top_k, $text, $this->getIndexEntityType($index));
+    $top_k = max(1, (int) ($query->getOption('top_k') ?? 8));
+    return $this->queryVector($index, $resolved['vector'], $top_k, $resolved['text'], $this->getIndexEntityType($index));
   }
 
   /**
@@ -454,7 +437,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
    *   ['result count' => int, 'results' => array].
    */
   public function queryVector(SearchApiIndex $index, array $vector, $top_k = 8, $rerank_text = '', $entity_type_for_ids = NULL) {
-    $top_k = (int) $top_k;
+    $top_k = max(1, (int) $top_k);
     $metric = !empty($this->options['metric_type']) ? $this->options['metric_type'] : 'COSINE';
     $operator = $this->metricOperator($metric);
 
@@ -513,6 +496,11 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
       }
       if ($entity_type && $entity_id) {
         $item_id = $entity_type == $entity_type_for_ids ? $entity_id : "{$entity_type}/{$entity_id}";
+        // Matches arrive best-first; keep the best chunk per entity. Later chunks
+        // would overwrite its score/excerpt while keeping its array position.
+        if (isset($results[$item_id])) {
+          continue;
+        }
         $results[$item_id] = [
           'id'      => $item_id,
           'score'   => $nm['score'],
