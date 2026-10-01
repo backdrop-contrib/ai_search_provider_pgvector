@@ -20,7 +20,7 @@ PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and q
 3. Select **PGVector** as the service backend.
 4. Configure the server settings:
    - **Schema** — PostgreSQL schema to store vector tables in. Defaults to `public`.
-   - **Table name** — Optional. Leave empty to auto-generate a per-index table name prefixed with `search_vector_`.
+   - **Table name** — Optional. Leave empty to auto-generate a per-index table name prefixed with `search_vector_`. A custom table name must be unique per Search API index.
    - **Metric Type** — Distance metric for nearest-neighbor search: `COSINE` (default), `L2`, or `IP`.
    - **IVFFLAT lists** — Number of inverted lists for the IVFFlat index. Defaults to `100`. Run `ANALYZE` on the table after indexing for this setting to take effect.
    - **Embeddings engine** — Select the embedding model to use for generating vectors.
