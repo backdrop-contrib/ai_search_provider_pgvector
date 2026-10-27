@@ -1,6 +1,7 @@
 name = AI Search PGVector
 description = PostgreSQL pgvector provider for AI search.
 backdrop = 1.x
+php = 8.2
 type = module
 package = AI
 dependencies[] = ai_search
