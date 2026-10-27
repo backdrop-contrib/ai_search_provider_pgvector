@@ -9,6 +9,7 @@ PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and q
 - `ai_search` module
 - PostgreSQL with the [pgvector extension](https://github.com/pgvector/pgvector) installed
 - The pgvector extension must be enabled in your database: `CREATE EXTENSION IF NOT EXISTS vector;`
+- The PHP `pdo_pgsql` extension
 
 ## Installation
 
@@ -20,6 +21,9 @@ PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and q
 2. Go to Admin -> Configuration -> Search and Metadata -> Search API and create or edit a server.
 3. Select **PGVector** as the service backend.
 4. Configure the server settings:
+   - **Host**, **Port** (default `5432`), **Database**, **Username**, **Password** — connection to the PostgreSQL server that has pgvector enabled. Host and database are required.
+   - **Connection timeout** — seconds to wait for the connection (default `5`).
+   - **SSL mode** — optional PostgreSQL `sslmode`.
    - **Schema** — PostgreSQL schema to store vector tables in. Defaults to `public`.
    - **Table name** — Optional. Leave empty to auto-generate a per-index table name prefixed with `search_vector_`. A custom table name must be unique per Search API index.
    - **Metric Type** — Distance metric for nearest-neighbor search: `COSINE` (default), `L2`, or `IP`.
@@ -30,7 +34,7 @@ PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and q
 
 ## Notes
 
-- This backend uses your site's existing database connection — no additional database credentials are needed.
+- This backend opens its own connection to a dedicated PostgreSQL server, so the site database can stay on MySQL or MariaDB.
 - The vector table and IVFFlat index are created automatically on first index run.
 - The embedding dimension is derived from the selected embeddings engine configuration.
 
