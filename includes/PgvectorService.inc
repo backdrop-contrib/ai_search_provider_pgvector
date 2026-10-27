@@ -405,7 +405,7 @@ class PgvectorService extends SearchApiAbstractService implements AiSearchBacken
     $index = $query->getIndex();
     $index_options = isset($index->options) ? $index->options : [];
 
-    $resolved = ai_search_resolve_query_embedding($query, $this->options, 'ai_search_pgvector');
+    $resolved = ai_search_resolve_query_embedding($query, $this->options, 'ai_search_provider_pgvector');
     if ($resolved === NULL) {
       return ['result count' => 0, 'results' => []];
     }
