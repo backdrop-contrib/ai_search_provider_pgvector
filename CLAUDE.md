@@ -6,7 +6,7 @@ See `README.md` in this directory for requirements and server configuration (sch
 
 ## Code Map
 
-- `ai_search_pgvector.module` — registers the `pgvector` Search API service backend
+- `ai_search_provider_pgvector.module` — registers the `pgvector` Search API service backend
 - `includes/PgvectorService.inc` — `PgvectorService extends SearchApiAbstractService implements AiSearchBackendInterface`. Uses the site's existing PostgreSQL database connection directly (no separate vector client class) — talks to the `vector` extension via raw SQL (`<->`/`<=>`/`<#>` operators depending on metric, `IVFFLAT` index).
 
 ## Known Constraints
