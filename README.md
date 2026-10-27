@@ -5,6 +5,7 @@ PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and q
 ## Requirements
 
 - Backdrop CMS 1.x
+- PHP 8.2 or later
 - `ai_search` module
 - PostgreSQL with the [pgvector extension](https://github.com/pgvector/pgvector) installed
 - The pgvector extension must be enabled in your database: `CREATE EXTENSION IF NOT EXISTS vector;`
