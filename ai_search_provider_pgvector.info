@@ -1,4 +1,4 @@
-name = AI Search PGVector
+name = AI Search Provider PGVector
 description = PostgreSQL pgvector provider for AI search.
 backdrop = 1.x
 php = 8.2

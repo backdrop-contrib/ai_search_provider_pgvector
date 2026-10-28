@@ -1,4 +1,4 @@
-# AI Search PGVector
+# AI Search Provider PGVector
 
 PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and queries embeddings directly in your existing PostgreSQL database using the pgvector extension, eliminating the need for a separate vector database service.
 
