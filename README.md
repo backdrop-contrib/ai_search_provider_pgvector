@@ -1,42 +1,12 @@
-# AI Search Provider PGVector
+# AI Search Provider pgvector
 
-PostgreSQL pgvector provider for the Backdrop CMS AI Search module. Stores and queries embeddings directly in your existing PostgreSQL database using the pgvector extension, eliminating the need for a separate vector database service.
-
-## Requirements
-
-- Backdrop CMS 1.x
-- PHP 8.2 or later
-- `ai_search` module
-- PostgreSQL with the [pgvector extension](https://github.com/pgvector/pgvector) installed
-- The pgvector extension must be enabled in your database: `CREATE EXTENSION IF NOT EXISTS vector;`
-- The PHP `pdo_pgsql` extension
+Store AI Search embeddings in PostgreSQL using the pgvector extension. Backdrop connects to PostgreSQL for vector search while its site database can stay on MySQL or MariaDB.
 
 ## Installation
 
-- Install this module using the official [Backdrop CMS instructions](https://backdropcms.org/user-guide/modules).
+Enable AI Search, this module, and the PHP `pdo_pgsql` extension. Choose **PostgreSQL pgvector** when creating a Search API server. [Backdrop module installation guide](https://backdropcms.org/user-guide/modules)
 
-## Configuration
-
-1. Enable this module.
-2. Go to Admin -> Configuration -> Search and Metadata -> Search API and create or edit a server.
-3. Select **PGVector** as the service backend.
-4. Configure the server settings:
-   - **Host**, **Port** (default `5432`), **Database**, **Username**, **Password** — connection to the PostgreSQL server that has pgvector enabled. Host and database are required.
-   - **Connection timeout** — seconds to wait for the connection (default `5`).
-   - **SSL mode** — optional PostgreSQL `sslmode`.
-   - **Schema** — PostgreSQL schema to store vector tables in. Defaults to `public`.
-   - **Table name** — Optional. Leave empty to auto-generate a per-index table name prefixed with `search_vector_`. A custom table name must be unique per Search API index.
-   - **Metric Type** — Distance metric for nearest-neighbor search: `COSINE` (default), `L2`, or `IP`.
-   - **IVFFLAT lists** — Number of inverted lists for the IVFFlat index. Defaults to `100`. Run `ANALYZE` on the table after indexing for this setting to take effect.
-   - **Embeddings engine** — Select the embedding model to use for generating vectors.
-5. Create a Search API index on that server.
-6. Index your content to populate the vector table.
-
-## Notes
-
-- This backend opens its own connection to a dedicated PostgreSQL server, so the site database can stay on MySQL or MariaDB.
-- The vector table and IVFFlat index are created automatically on first index run.
-- The embedding dimension is derived from the selected embeddings engine configuration.
+[Setup and troubleshooting](https://github.com/backdrop-contrib/ai_search_provider_pgvector/wiki)
 
 ## Issues
 
